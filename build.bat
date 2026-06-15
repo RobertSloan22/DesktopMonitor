@@ -11,6 +11,7 @@ echo Building ActivityMonitor.exe ...
 pyinstaller --noconfirm --onefile --noconsole --name ActivityMonitor ^
   --add-data "static;static" ^
   --hidden-import pystray._win32 ^
+  --hidden-import collector_win ^
   --collect-submodules pystray ^
   monitor.py || goto :err
 

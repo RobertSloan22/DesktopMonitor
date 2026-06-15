@@ -1,6 +1,10 @@
-# Core (required to collect activity)
+# Core (required to collect activity) — cross-platform
 psutil>=5.9
 
-# System-tray icon (optional, but used by the bundled exe)
+# System-tray icon (optional, used by the bundled app) — cross-platform
 pystray>=0.19
 pillow>=9.0
+
+# macOS only: read the active app, window titles, and idle time
+pyobjc-framework-Cocoa>=9.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=9.0; sys_platform == "darwin"

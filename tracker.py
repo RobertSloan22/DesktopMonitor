@@ -1,148 +1,51 @@
-"""Activity collector. MUST run under Windows Python (python.exe), not WSL
-Python, because it reads the live Windows desktop session via user32.
+"""Cross-platform activity collector loop.
 
-Every `interval` seconds it records:
-  - the focused window's process + title  -> samples table
-  - whether you've been idle (no input)   -> samples.is_idle
-  - browser page titles                    -> samples.page_title
-  - which windowed apps opened / closed    -> app_events table
+Auto-detects the OS and loads the matching low-level collector
+(collector_win on Windows, collector_mac on macOS). The sampling loop, idle
+handling, app open/close diffing, and DB writes are shared across platforms.
+
+Run with the platform's native Python (or the bundled app) so it can read the
+live desktop session.
 """
 
-import ctypes
-import ctypes.wintypes as wt
+import platform
 import sys
 import time
 
 import db
 
-try:
-    import psutil
-except ImportError:
-    sys.exit("Missing dependency. Run:  pip install psutil")
-
 # --- config -----------------------------------------------------------------
 INTERVAL_SEC = 5          # how often to sample the focused window
 IDLE_THRESHOLD_SEC = 60   # no keyboard/mouse for this long => "idle/away"
 
-BROWSERS = {
-    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
-    "opera.exe", "vivaldi.exe", "iexplore.exe", "arc.exe",
-}
-# Browser window-title suffixes to strip so we keep just the page title.
-BROWSER_SUFFIXES = [
-    " - Google Chrome", " - Microsoft​ Edge", " - Microsoft Edge",
-    " — Mozilla Firefox", " - Mozilla Firefox", " - Brave",
-    " - Opera", " - Vivaldi", " - Internet Explorer",
-]
 
-# --- win32 plumbing ---------------------------------------------------------
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-
-
-class LASTINPUTINFO(ctypes.Structure):
-    _fields_ = [("cbSize", wt.UINT), ("dwTime", wt.DWORD)]
+def _load_collector():
+    system = platform.system()
+    if system == "Windows":
+        import collector_win as col
+        return col
+    if system == "Darwin":
+        try:
+            import collector_mac as col
+        except ImportError as e:
+            sys.exit("macOS collector needs PyObjC. Install with:\n"
+                     "  pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz\n"
+                     f"(import error: {e})")
+        return col
+    sys.exit(f"Unsupported platform: {system}. Windows and macOS are supported.")
 
 
-def idle_seconds() -> float:
-    """Seconds since the last keyboard or mouse input, session-wide."""
-    info = LASTINPUTINFO()
-    info.cbSize = ctypes.sizeof(info)
-    if not user32.GetLastInputInfo(ctypes.byref(info)):
-        return 0.0
-    millis = kernel32.GetTickCount() - info.dwTime
-    return millis / 1000.0
-
-
-def _window_title(hwnd) -> str:
-    length = user32.GetWindowTextLengthW(hwnd)
-    if length == 0:
-        return ""
-    buf = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buf, length + 1)
-    return buf.value
-
-
-def _pid_of_window(hwnd) -> int:
-    pid = wt.DWORD()
-    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    return pid.value
-
-
-def _proc_info(pid):
-    """(process_name, exe_path) for a pid, tolerant of access errors."""
-    try:
-        p = psutil.Process(pid)
-        return p.name(), (p.exe() if _safe_exe(p) else None)
-    except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
-        return "unknown", None
-
-
-def _safe_exe(p):
-    try:
-        return p.exe()
-    except (psutil.AccessDenied, psutil.NoSuchProcess, FileNotFoundError, OSError):
-        return None
-
-
-def foreground() -> dict:
-    """Describe the currently focused window."""
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return {"process_name": "idle-desktop", "exe_path": None,
-                "window_title": "", "is_browser": False, "page_title": None}
-    title = _window_title(hwnd)
-    pid = _pid_of_window(hwnd)
-    name, exe = _proc_info(pid)
-    is_browser = name.lower() in BROWSERS
-    page_title = _clean_browser_title(title) if is_browser else None
-    return {"process_name": name, "exe_path": exe, "window_title": title,
-            "is_browser": is_browser, "page_title": page_title}
-
-
-def _clean_browser_title(title: str) -> str:
-    t = title
-    for suffix in BROWSER_SUFFIXES:
-        if t.endswith(suffix):
-            t = t[: -len(suffix)]
-            break
-    # Drop leading unread-count badge like "(3) "
-    if t.startswith("(") and ")" in t[:6]:
-        t = t[t.index(")") + 1:].lstrip()
-    return t.strip() or "(new tab / blank)"
-
-
-# Enumerate top-level visible windows to know which *apps* are open.
-WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
-
-
-def windowed_apps() -> set:
-    """Set of process names that currently own a visible, titled window."""
-    found = set()
-
-    def cb(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        if not _window_title(hwnd):
-            return True
-        name, _ = _proc_info(_pid_of_window(hwnd))
-        if name and name != "unknown":
-            found.add(name)
-        return True
-
-    user32.EnumWindows(WNDENUMPROC(cb), 0)
-    return found
-
-
-# --- main loop --------------------------------------------------------------
 def run() -> None:
+    col = _load_collector()
     db.init()
     conn = db.connect()
-    print(f"[tracker] sampling every {INTERVAL_SEC}s, "
+    print(f"[tracker] platform={col.PLATFORM}, sampling every {INTERVAL_SEC}s, "
           f"idle after {IDLE_THRESHOLD_SEC}s. Ctrl+C to stop.")
+    if col.NEEDS_PERMISSION_NOTE:
+        print(f"[tracker] note: {col.NEEDS_PERMISSION_NOTE}")
 
-    prev_apps = windowed_apps()
-    for name in prev_apps:  # treat apps already open at startup as 'start'
+    prev_apps = col.windowed_apps()
+    for name in prev_apps:  # apps already open at startup count as 'start'
         db.insert_event(conn, time.time(), name, "start")
 
     last = time.time()
@@ -155,15 +58,15 @@ def run() -> None:
             # Clamp so machine sleep / hibernation isn't counted as activity.
             duration = min(delta, INTERVAL_SEC * 3)
 
-            is_idle = idle_seconds() >= IDLE_THRESHOLD_SEC
-            fg = foreground()
+            is_idle = col.idle_seconds() >= IDLE_THRESHOLD_SEC
+            fg = col.foreground()
             db.insert_sample(
                 conn, now, duration,
                 fg["process_name"], fg["exe_path"], fg["window_title"],
                 fg["is_browser"], fg["page_title"], is_idle,
             )
 
-            cur_apps = windowed_apps()
+            cur_apps = col.windowed_apps()
             for name in cur_apps - prev_apps:
                 db.insert_event(conn, now, name, "start")
             for name in prev_apps - cur_apps:

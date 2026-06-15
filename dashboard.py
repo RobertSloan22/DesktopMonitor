@@ -10,6 +10,7 @@ Open http://localhost:8777 once it's running.
 
 import json
 import os
+import socket
 import sqlite3
 import sys
 import time
@@ -18,7 +19,23 @@ from urllib.parse import urlparse, parse_qs
 
 import db
 
-PORT = 8777
+PORT = int(os.environ.get("ACTIVITY_MONITOR_PORT", "8777"))
+
+# Bind address. Defaults to localhost-only (private). Set
+# ACTIVITY_MONITOR_HOST=0.0.0.0 to expose the dashboard to your local network.
+BIND_HOST = os.environ.get("ACTIVITY_MONITOR_HOST", "127.0.0.1")
+
+
+def lan_ip() -> str:
+    """Best-effort primary LAN IP of this machine (no traffic actually sent)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 def resource_dir() -> str:
@@ -220,12 +237,22 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server() -> ThreadingHTTPServer:
     db.init()
-    return ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    return ThreadingHTTPServer((BIND_HOST, PORT), Handler)
+
+
+def urls_banner() -> str:
+    """Human-readable line(s) describing where the dashboard is reachable."""
+    if BIND_HOST in ("0.0.0.0", "::"):
+        return (f"on THIS computer:  http://localhost:{PORT}\n"
+                f"            [dashboard] on the local network: "
+                f"http://{lan_ip()}:{PORT}  "
+                f"(visible to other devices on your LAN)")
+    return f"http://localhost:{PORT}  (this computer only)"
 
 
 def run():
     server = make_server()
-    print(f"[dashboard] open http://localhost:{PORT}  (Ctrl+C to stop)")
+    print(f"[dashboard] {urls_banner()}  (Ctrl+C to stop)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

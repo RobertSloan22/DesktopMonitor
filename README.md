@@ -1,11 +1,15 @@
 # 🖥️ Activity Monitor
 
-Automatically keeps track of what you do on your Windows PC all day — **no manual
-logging**. It quietly records which app/window is in focus, how long you spend in
-each, when you're idle/away, the websites you visit, and when apps open and close.
-You review it all on a local web dashboard with charts and a timeline.
+Automatically keeps track of what you do on your **Windows or Mac** computer all
+day — **no manual logging**. It quietly records which app/window is in focus, how
+long you spend in each, when you're idle/away, the websites you visit, and when
+apps open and close. You review it all on a web dashboard with charts and a
+timeline.
 
-Everything stays **100% local** on your machine. Nothing is uploaded anywhere.
+The same codebase runs on both OSes — it **auto-detects the platform** and loads
+the right collector. Everything stays **local** by default (nothing is uploaded),
+and you can optionally expose the dashboard to your home network so you can check
+it from another device.
 
 ---
 
@@ -20,6 +24,29 @@ Everything stays **100% local** on your machine. Nothing is uploaded anywhere.
 | App open / close events| Logs when windowed apps are launched and closed               |
 
 ---
+
+## Platform support
+
+| Component            | Windows | macOS | Notes |
+|----------------------|:-------:|:-----:|-------|
+| Activity collector   | ✅ | ✅ | `collector_win` / `collector_mac`, picked automatically |
+| Dashboard + database | ✅ | ✅ | identical |
+| Browser extension    | ✅ | ✅ | Chrome/Edge/Brave on either OS |
+| Self-contained build | `.exe` | `.app` | built per-OS (can't cross-compile) |
+
+> **Build where you run.** A Windows `.exe` must be built on Windows and a macOS
+> `.app` on a Mac — PyInstaller can't cross-compile. The source itself is portable.
+
+---
+
+## Quick start
+
+- **Windows:** jump to [Windows](#windows) below.
+- **macOS:** jump to [macOS](#macos) below.
+
+---
+
+# Windows
 
 ## Two ways to use it
 
@@ -69,6 +96,72 @@ python monitor.py both        REM tracker + dashboard, console only (no tray)
 python monitor.py tracker     REM only collect data
 python monitor.py dashboard   REM only view the dashboard
 ```
+
+---
+
+# macOS
+
+Requires **Python 3** (`python3 --version`; if missing, run `xcode-select
+--install` or get it from <https://python.org>).
+
+## Run from source (recommended on Mac)
+
+Running from source is the most reliable option on macOS, because system
+permissions attach cleanly to Python/Terminal.
+
+1. In Finder, double-click **`run.command`** (or run `./run.command` in Terminal).
+   - It installs dependencies and starts the tracker + dashboard with a menu-bar
+     icon. Open the dashboard at <http://localhost:8777>.
+
+> First run may say *"cannot be opened because it is from an unidentified
+> developer."* Right-click `run.command` → **Open** → **Open**, just once.
+
+## Build a self-contained app (optional)
+
+1. `./build_mac.sh` → produces **`dist/ActivityMonitor.app`**.
+2. `./install_mac.sh` → copies it to `~/Applications`, sets it to **start at login**
+   (a LaunchAgent), and launches it.
+3. Uninstall with `./uninstall_mac.sh`.
+
+## macOS permissions
+
+- **App name, time-per-app, idle, and app open/close** work with **no permission**.
+- **Window titles** (and browser page titles *without* the extension) require
+  **Screen Recording** permission: System Settings → Privacy & Security → Screen
+  Recording → enable it for the app (or Terminal). Until then, titles are blank but
+  everything else still records. The browser extension gives full URLs either way.
+
+---
+
+## See the dashboard from other devices (local network)
+
+By default the dashboard is bound to `localhost` — only the computer running it can
+open it. To view it from your phone, tablet, or another computer **on the same
+network**, set the bind address to `0.0.0.0`:
+
+**Windows (Command Prompt):**
+```bat
+set ACTIVITY_MONITOR_HOST=0.0.0.0
+python monitor.py both
+```
+
+**macOS / Terminal:**
+```bash
+ACTIVITY_MONITOR_HOST=0.0.0.0 ./run.command
+```
+
+On startup it prints the network URL, e.g. `http://192.168.1.42:8777`. Open that
+from any device on your LAN.
+
+You can also change the port with `ACTIVITY_MONITOR_PORT` (default `8777`).
+
+> ⚠️ **Security note.** Exposing it to the network means **anyone on that network
+> can see your activity**, and the data-ingest endpoint accepts posts from any
+> device. Only do this on a network you trust (home, not coffee-shop Wi-Fi). You
+> may also need to allow the port through your OS firewall the first time
+> (Windows will prompt; on Mac, System Settings → Network → Firewall). There's no
+> password on the dashboard — keep it to `localhost` unless you specifically want
+> LAN access.
 
 ---
 
@@ -138,13 +231,20 @@ extension's heartbeat interval is `INTERVAL_SEC` in `extension/background.js`.
 | File                  | Purpose                                            |
 |-----------------------|----------------------------------------------------|
 | `monitor.py`          | Entry point (`tray` / `both` / `tracker` / `dashboard`) |
-| `tracker.py`          | Windows activity collector                         |
-| `dashboard.py`        | Local web server + JSON/ingestion API              |
+| `tracker.py`          | Cross-platform collector loop (auto-selects OS)    |
+| `collector_win.py`    | Windows activity primitives (user32 + psutil)      |
+| `collector_mac.py`    | macOS activity primitives (PyObjC: AppKit + Quartz)|
+| `browsers.py`         | Shared browser detection + title cleanup           |
+| `dashboard.py`        | Web server + JSON/ingestion API (localhost or LAN) |
 | `tray.py`             | System-tray icon                                   |
 | `db.py`               | SQLite storage                                     |
 | `static/index.html`   | Dashboard UI                                       |
 | `extension/`          | Browser extension (Chromium)                       |
-| `build.bat`           | Build the self-contained `ActivityMonitor.exe`     |
-| `install.bat` / `uninstall.bat` | Install/remove + autostart               |
-| `setup.bat` / `run.bat` | Run from source                                  |
+| `build.bat`           | Build the self-contained Windows `.exe`            |
+| `install.bat` / `uninstall.bat` | Windows install/remove + autostart       |
+| `setup.bat` / `run.bat` | Run from source on Windows                       |
+| `build_mac.sh`        | Build the macOS `.app`                             |
+| `install_mac.sh` / `uninstall_mac.sh` | macOS install/remove + login agent |
+| `run.command`         | Run from source on macOS (double-click)            |
+
 # DesktopMonitor

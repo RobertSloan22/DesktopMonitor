@@ -32,7 +32,7 @@ def run_both(use_tray: bool):
     server = dashboard.make_server()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f"http://localhost:{dashboard.PORT}"
-    print(f"[monitor] running. Dashboard: {url}")
+    print(f"[monitor] running. Dashboard: {dashboard.urls_banner()}")
 
     if use_tray:
         import tray

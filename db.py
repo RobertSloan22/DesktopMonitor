@@ -15,6 +15,7 @@ same whether you run from source or from the bundled ActivityMonitor.exe.
 
 import os
 import sqlite3
+import sys
 from datetime import datetime
 
 
@@ -23,6 +24,9 @@ def app_data_dir() -> str:
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         d = os.path.join(base, "ActivityMonitor")
+    elif sys.platform == "darwin":
+        d = os.path.join(os.path.expanduser("~"),
+                         "Library", "Application Support", "ActivityMonitor")
     else:
         d = os.path.join(os.path.expanduser("~"), ".activity-monitor")
     os.makedirs(d, exist_ok=True)
