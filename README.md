@@ -168,8 +168,7 @@ You can also change the port with `ACTIVITY_MONITOR_PORT` (default `8777`).
 ## The browser extension (real URLs)
 
 The desktop tracker already sees *that* you're in a browser and the page title.
-For full **URLs and domains**, install the lightweight extension. It only talks to
-`http://localhost:8777` on your own machine.
+For full **URLs and domains**, install the lightweight extension.
 
 **Chrome / Edge / Brave (and other Chromium browsers):**
 
@@ -178,9 +177,47 @@ For full **URLs and domains**, install the lightweight extension. It only talks 
    - Edge: `edge://extensions`
    - Brave: `brave://extensions`
 2. Turn on **Developer mode** (toggle, top-right).
-3. Click **Load unpacked** and select this project's **`extension`** folder.
-4. Done. While the monitor is running, the dashboard's **Top websites** and
-   **Top pages (URLs)** cards fill in. (Heartbeat is ~30s, so give it a minute.)
+3. Click **Load unpacked** and select the **`extension`** folder.
+4. The **Settings page opens automatically** on first install — confirm the server
+   and click **Save**. While the monitor is running, the dashboard's **Top websites**
+   and **Top pages (URLs)** cards fill in. (Reports every ~30s, so give it a minute.)
+
+### Configuring it
+
+Click the extension's toolbar icon for a **status popup** (connected / paused, where
+it's reporting, quick on-off), or open **Settings** to change:
+
+| Setting | Meaning |
+|---------|---------|
+| **Server host** | `localhost` if the monitor runs on the same PC, or the monitor PC's network IP (e.g. `192.168.1.42`) |
+| **Port** | Monitor port (default `8777`) |
+| **Report every** | Heartbeat interval in seconds (min 15) |
+| **Tracking enabled** | Master on/off |
+
+The **Test connection** button tells you immediately whether it can reach the
+monitor. For a non-`localhost` host, the browser will ask permission to contact that
+address the first time (click **Allow**).
+
+### Rolling it out to a team
+
+Settings resolve in this order (later wins):
+**built-in → `defaults.json` (team) → each person's Settings → managed policy (IT).**
+
+So to set everyone up at once:
+
+1. Edit **`extension/defaults.json`** once — set `host`/`port` to your shared monitor
+   (or leave `host: "localhost"` if each teammate runs their own monitor).
+2. Share the `extension` folder (zip it, a shared drive, or this git repo).
+3. Each teammate does **Load unpacked** on that folder — they inherit your defaults
+   automatically; the Settings page opens so they can confirm. Individuals can still
+   override their own copy, and **Reset to team defaults** restores yours.
+
+> **Tip for a fixed shared server:** if everyone reports to one LAN address, also add
+> `"http://192.168.1.42/*"` to `host_permissions` in `manifest.json` before sharing —
+> then teammates won't get the per-host permission prompt at all.
+>
+> **Enterprise option:** admins can hard-enforce settings via Chrome managed storage
+> (policy keys match `managed_schema.json`); those override everything and lock the UI.
 
 > Firefox uses a slightly different extension format and isn't included here — its
 > page titles are still captured by the desktop tracker.

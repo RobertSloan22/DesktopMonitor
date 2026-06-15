@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font:13px/1.4 system-ui,Segoe UI,Roboto,sans-serif; background:#0f1115;
+         color:#e6e8ec; margin:0; padding:14px; width:240px; }
+  h1 { font-size:14px; margin:0 0 10px; }
+  .status { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#4a505c; }
+  .dot.ok { background:#5fd083; } .dot.err { background:#eb5757; }
+  .detail { color:#8b93a1; font-size:12px; min-height:16px; }
+  .row { display:flex; align-items:center; justify-content:space-between; margin:12px 0; }
+  button { background:#222733; color:#e6e8ec; border:0; border-radius:6px;
+           padding:7px 10px; font-size:12px; cursor:pointer; width:100%; }
+  .target { color:#8b93a1; font-size:11px; margin-top:8px; }
+  code { background:#222733; padding:1px 4px; border-radius:4px; }
+</style>
+</head>
+<body>
+  <h1>🖥️ Activity Monitor</h1>
+  <div class="status"><span class="dot" id="dot"></span><b id="state">…</b></div>
+  <div class="detail" id="detail"></div>
+  <div class="row">
+    <label><input type="checkbox" id="enabled"> Tracking enabled</label>
+  </div>
+  <button id="opts">Settings…</button>
+  <div class="target" id="target"></div>
+<script src="popup.js"></script>
+</body>
+</html>

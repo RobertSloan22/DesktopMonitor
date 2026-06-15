@@ -1,0 +1,7 @@
+{
+  "_comment": "TEAM DEFAULTS. Edit this once before sharing the extension folder with your team. Each teammate who loads the extension gets these settings automatically; they can still override them on the options page. 'host' is where the Activity Monitor server runs: use 'localhost' if each person runs their own monitor, or the shared monitor PC's LAN IP (e.g. 192.168.1.42) if everyone reports to one machine.",
+  "host": "localhost",
+  "port": 8777,
+  "interval": 30,
+  "enabled": true
+}

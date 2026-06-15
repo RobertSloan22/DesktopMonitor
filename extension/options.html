@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Activity Monitor — Settings</title>
+<style>
+  body { font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:#0f1115;
+         color:#e6e8ec; margin:0; padding:28px; }
+  .wrap { max-width:540px; margin:0 auto; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.sub { color:#8b93a1; margin:0 0 22px; }
+  label { display:block; margin:14px 0 4px; color:#c7ccd4; }
+  input[type=text], input[type=number] {
+    width:100%; box-sizing:border-box; background:#181b22; color:#e6e8ec;
+    border:1px solid #2a2f3a; border-radius:7px; padding:9px 11px; font-size:14px; }
+  .row { display:flex; gap:14px; }
+  .row > div { flex:1; }
+  .check { display:flex; align-items:center; gap:8px; margin-top:16px; }
+  .actions { margin-top:22px; display:flex; gap:10px; flex-wrap:wrap; }
+  button { background:#5b9dff; color:#06122b; border:0; border-radius:7px;
+           padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer; }
+  button.ghost { background:#222733; color:#e6e8ec; }
+  .msg { margin-top:16px; padding:10px 12px; border-radius:7px; font-size:13px;
+         display:none; }
+  .ok { background:#16361f; color:#7fe0a0; display:block; }
+  .err { background:#3a1d1d; color:#f0a3a3; display:block; }
+  .hint { color:#8b93a1; font-size:12px; margin-top:4px; }
+  .banner { background:#1b2233; border:1px solid #2a3550; color:#a9c2ff;
+            padding:10px 12px; border-radius:7px; font-size:12px; margin-bottom:18px; }
+  code { background:#222733; padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🖥️ Activity Monitor — Settings</h1>
+  <p class="sub">Where to send the active tab's URL &amp; title.</p>
+
+  <div class="banner" id="teamBanner" style="display:none"></div>
+
+  <label for="host">Server host</label>
+  <input type="text" id="host" placeholder="localhost">
+  <div class="hint">Use <code>localhost</code> if the monitor runs on this same
+    computer, or the monitor PC's network address (e.g. <code>192.168.1.42</code>).</div>
+
+  <div class="row">
+    <div>
+      <label for="port">Port</label>
+      <input type="number" id="port" placeholder="8777">
+    </div>
+    <div>
+      <label for="interval">Report every (seconds)</label>
+      <input type="number" id="interval" min="15" placeholder="30">
+    </div>
+  </div>
+
+  <div class="check">
+    <input type="checkbox" id="enabled">
+    <label for="enabled" style="margin:0">Tracking enabled</label>
+  </div>
+
+  <div class="actions">
+    <button id="save">Save</button>
+    <button id="test" class="ghost">Test connection</button>
+    <button id="reset" class="ghost">Reset to team defaults</button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+</div>
+<script src="options.js"></script>
+</body>
+</html>
