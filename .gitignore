@@ -1,0 +1,22 @@
+# Activity data (local only — never commit your history)
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller build output
+build/
+dist/
+*.spec
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

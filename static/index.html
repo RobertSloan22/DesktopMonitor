@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262b35; --txt:#e6e8ec;
+          --muted:#8b93a1; --accent:#5b9dff; --idle:#4a505c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); }
+  header { display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+           padding:18px 24px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  select { background:var(--card); color:var(--txt); border:1px solid var(--line);
+           border-radius:6px; padding:6px 10px; font-size:14px; }
+  .grid { display:grid; gap:16px; padding:24px;
+          grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line);
+          border-radius:10px; padding:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
+             color:var(--muted); margin:0 0 12px; }
+  .stats { display:flex; gap:16px; flex-wrap:wrap; }
+  .stat { flex:1; min-width:120px; }
+  .stat .v { font-size:26px; font-weight:600; }
+  .stat .l { color:var(--muted); font-size:12px; }
+  .wide { grid-column:1 / -1; }
+  table { width:100%; border-collapse:collapse; }
+  td,th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
+          font-size:13px; }
+  th { color:var(--muted); font-weight:500; }
+  td.r,th.r { text-align:right; white-space:nowrap; color:var(--muted); }
+  .ttl { max-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl { position:relative; height:46px; background:#11141a; border-radius:6px;
+        overflow:hidden; border:1px solid var(--line); }
+  .seg { position:absolute; top:0; bottom:0; }
+  .axis { display:flex; justify-content:space-between; color:var(--muted);
+          font-size:11px; margin-top:4px; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:20px; }
+  .start { background:#16361f; color:#5fd083; }
+  .stop  { background:#3a1d1d; color:#e58a8a; }
+  .empty { padding:60px 24px; text-align:center; color:var(--muted); }
+  .muted { color:var(--muted); }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖥️ Activity Monitor</h1>
+  <label class="muted">Day: <select id="day"></select></label>
+  <span id="status" class="muted"></span>
+</header>
+<div id="app"></div>
+
+<script>
+const COLORS = ["#5b9dff","#f0883e","#5fd083","#e06c9f","#c98bff","#f2c94c",
+                "#56ccf2","#eb5757","#9bd0a5","#bb9af7","#7aa2f7","#e0af68"];
+let chart;
+
+function colorFor(name, idx) {
+  if (name === "(idle)") return "#3a3f4b";
+  return COLORS[idx % COLORS.length];
+}
+function timeOfDay(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+}
+
+async function loadDays() {
+  const days = await (await fetch("/api/days")).json();
+  const sel = document.getElementById("day");
+  sel.innerHTML = "";
+  if (!days.length) return false;
+  for (const d of days) {
+    const o = document.createElement("option");
+    o.value = d; o.textContent = d;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => loadDay(sel.value);
+  return true;
+}
+
+async function loadDay(date) {
+  const r = await (await fetch("/api/day?date=" + encodeURIComponent(date))).json();
+  const app = document.getElementById("app");
+  if (r.empty) {
+    app.innerHTML = '<div class="empty">No data yet. Start the tracker '
+      + '(run.bat → option 1 or 3) and use your PC for a bit, then refresh.</div>';
+    return;
+  }
+  render(r);
+}
+
+function render(r) {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div class="grid">
+      <div class="card">
+        <h2>Summary</h2>
+        <div class="stats">
+          <div class="stat"><div class="v">${r.active_human}</div><div class="l">Active</div></div>
+          <div class="stat"><div class="v">${r.idle_human}</div><div class="l">Idle / away</div></div>
+          <div class="stat"><div class="v">${r.apps[0]?.name ?? "—"}</div><div class="l">Top app</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Time per app</h2>
+        <canvas id="appsChart" height="220"></canvas>
+      </div>
+      <div class="card wide">
+        <h2>Timeline</h2>
+        <div class="tl" id="timeline"></div>
+        <div class="axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+      </div>
+      <div class="card">
+        <h2>Top websites (domains)</h2>
+        <table><thead><tr><th>Domain</th><th class="r">Time</th></tr></thead><tbody>
+          ${r.domains.length ? r.domains.map(d =>
+            `<tr><td class="ttl" title="${esc(d.domain)}">${esc(d.domain)}</td><td class="r">${d.human}</td></tr>`
+          ).join("") : '<tr><td class="muted" colspan="2">No data — install the browser extension (see README).</td></tr>'}
+        </tbody></table>
+      </div>
+      <div class="card">
+        <h2>Top pages (URLs)</h2>
+        <table><thead><tr><th>Page</th><th class="r">Time</th></tr></thead><tbody>
+          ${r.urls.length ? r.urls.map(u =>
+            `<tr><td class="ttl" title="${esc(u.url)}"><a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.title || u.url)}</a><div class="muted" style="font-size:11px">${esc(u.domain)}</div></td><td class="r">${u.human}</td></tr>`
+          ).join("") : `<tr><td class="muted" colspan="2">No URL data yet. ${r.pages.length ? 'Browser page titles are shown below.' : 'Install the browser extension to capture URLs.'}</td></tr>`}
+        </tbody></table>
+      </div>
+      ${r.pages.length ? `<div class="card">
+        <h2>Browser page titles</h2>
+        <table><thead><tr><th>Page</th><th class="r">Time</th></tr></thead><tbody>
+          ${r.pages.map(p =>
+            `<tr><td class="ttl" title="${esc(p.title)}">${esc(p.title)}</td><td class="r">${p.human}</td></tr>`
+          ).join("")}
+        </tbody></table>
+      </div>` : ''}
+      <div class="card">
+        <h2>App open / close events</h2>
+        <table><thead><tr><th class="r">Time</th><th>App</th><th></th></tr></thead><tbody>
+          ${r.events.length ? r.events.map(e =>
+            `<tr><td class="r">${timeOfDay(e.ts)}</td><td>${esc(e.name)}</td>
+             <td><span class="pill ${e.event}">${e.event}</span></td></tr>`
+          ).join("") : '<tr><td class="muted" colspan="3">No events.</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>`;
+
+  drawApps(r.apps);
+  drawTimeline(r.segments, r.day);
+}
+
+function drawApps(apps) {
+  if (chart) chart.destroy();
+  const ctx = document.getElementById("appsChart");
+  chart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: apps.map(a => a.name),
+      datasets: [{
+        data: apps.map(a => +(a.sec/60).toFixed(1)),
+        backgroundColor: apps.map((a,i) => colorFor(a.name, i)),
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend:{display:false},
+        tooltip:{callbacks:{label:c => c.parsed.x + " min"}} },
+      scales: {
+        x: { ticks:{color:"#8b93a1"}, grid:{color:"#262b35"}, title:{display:true,text:"minutes",color:"#8b93a1"} },
+        y: { ticks:{color:"#e6e8ec"}, grid:{display:false} },
+      },
+    },
+  });
+}
+
+function drawTimeline(segments, day) {
+  const tl = document.getElementById("timeline");
+  tl.innerHTML = "";
+  // Day window: local midnight -> next midnight
+  const start = new Date(day + "T00:00:00").getTime() / 1000;
+  const span = 24 * 3600;
+  const names = [...new Set(segments.filter(s=>!s.idle).map(s=>s.label))];
+  segments.forEach(s => {
+    const left = Math.max(0, (s.start - start) / span) * 100;
+    const width = Math.max(0.1, (s.end - s.start) / span) * 100;
+    const div = document.createElement("div");
+    div.className = "seg";
+    div.style.left = left + "%";
+    div.style.width = width + "%";
+    div.style.background = s.idle ? "var(--idle)"
+      : colorFor(s.label, names.indexOf(s.label));
+    div.style.opacity = s.idle ? .5 : 1;
+    div.title = `${s.label}  ${timeOfDay(s.start)}–${timeOfDay(s.end)}`;
+    tl.appendChild(div);
+  });
+}
+
+function esc(s) {
+  return (s ?? "").replace(/[&<>"]/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+
+(async function init() {
+  const has = await loadDays();
+  if (!has) {
+    document.getElementById("app").innerHTML =
+      '<div class="empty">No data yet. Start the tracker (run.bat), '
+      + 'use your PC for a few minutes, then refresh this page.</div>';
+    return;
+  }
+  loadDay(document.getElementById("day").value);
+})();
+</script>
+</body>
+</html>

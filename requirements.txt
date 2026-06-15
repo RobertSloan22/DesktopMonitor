@@ -1,0 +1,6 @@
+# Core (required to collect activity)
+psutil>=5.9
+
+# System-tray icon (optional, but used by the bundled exe)
+pystray>=0.19
+pillow>=9.0

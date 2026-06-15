@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Activity Monitor — Web Tracker",
+  "version": "1.0",
+  "description": "Sends the active tab's URL and title to your local Activity Monitor so the dashboard can show which websites you use.",
+  "permissions": ["tabs", "idle", "alarms"],
+  "host_permissions": ["http://localhost:8777/*"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
