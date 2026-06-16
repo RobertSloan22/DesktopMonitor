@@ -148,6 +148,13 @@ function render(r) {
           ).join("") : '<tr><td class="muted" colspan="3">No events.</td></tr>'}
         </tbody></table>
       </div>
+      ${inputCard(r.input)}
+      ${powerCard(r.power)}
+      ${sessionCard(r.session)}
+      ${devicesCard(r.devices)}
+      ${networkCard(r.network)}
+      ${monitorsCard(r.monitors)}
+      ${procEventsCard(r.proc_events)}
     </div>`;
 
   drawApps(r.apps);
@@ -199,6 +206,78 @@ function drawTimeline(segments, day) {
     div.title = `${s.label}  ${timeOfDay(s.start)}–${timeOfDay(s.end)}`;
     tl.appendChild(div);
   });
+}
+
+// --- extended logging suite cards (each hides itself when no data) ---------
+function statRow(pairs) {
+  return '<div class="stats">' + pairs.map(([v,l]) =>
+    `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`
+  ).join("") + '</div>';
+}
+
+function inputCard(d) {
+  if (!d || (!d.keys && !d.clicks && !d.scrolls && !d.dist_px)) return "";
+  const km = (d.dist_px / 3779.5).toFixed(1); // ~96 dpi px -> cm, then /100 = m
+  return `<div class="card"><h2>Input activity (counts only)</h2>
+    ${statRow([[d.keys.toLocaleString(),"Keystrokes"],
+               [d.clicks.toLocaleString(),"Clicks"],
+               [d.scrolls.toLocaleString(),"Scroll ticks"]])}
+    <div class="muted" style="margin-top:10px">Mouse travel: ${d.dist_px.toLocaleString()} px
+    (~${km} m) · key contents are never recorded</div></div>`;
+}
+
+function powerCard(d) {
+  if (!d || (!d.battery_sec && !d.ac_sec)) return "";
+  const range = (d.pct_min != null)
+    ? `${Math.round(d.pct_min)}–${Math.round(d.pct_max)}%` : "—";
+  return `<div class="card"><h2>Power</h2>
+    ${statRow([[d.ac_human,"On AC"],[d.battery_human,"On battery"],
+               [range,"Battery range"]])}</div>`;
+}
+
+function sessionCard(d) {
+  if (!d || (!d.locked_sec && d.screensaver_human === "0m")) return "";
+  return `<div class="card"><h2>Session</h2>
+    ${statRow([[d.locked_human,"Locked"],
+               [d.screensaver_human,"Screensaver"]])}</div>`;
+}
+
+function devicesCard(d) {
+  if (!d || (!d.camera_sec && !d.mic_sec)) return "";
+  return `<div class="card"><h2>Camera / microphone in use</h2>
+    ${statRow([[d.camera_human,"📷 Camera"],[d.mic_human,"🎙️ Microphone"]])}</div>`;
+}
+
+function networkCard(d) {
+  if (!d || (!d.sent && !d.recv && !(d.ssids && d.ssids.length))) return "";
+  const ssidRows = (d.ssids || []).map(s =>
+    `<tr><td class="ttl" title="${esc(s.ssid)}">${esc(s.ssid)}</td><td class="r">${s.human}</td></tr>`
+  ).join("") || '<tr><td class="muted" colspan="2">No Wi-Fi SSID recorded.</td></tr>';
+  return `<div class="card"><h2>Network</h2>
+    ${statRow([[d.recv_human,"Downloaded"],[d.sent_human,"Uploaded"]])}
+    <table style="margin-top:10px"><thead><tr><th>Wi-Fi SSID</th><th class="r">Time</th></tr></thead>
+    <tbody>${ssidRows}</tbody></table></div>`;
+}
+
+function monitorsCard(monitors) {
+  if (!monitors || !monitors.length) return "";
+  const rows = monitors.map(m =>
+    `<tr><td>Display ${m.monitor + 1}</td><td class="r">${m.human}</td></tr>`
+  ).join("");
+  return `<div class="card"><h2>Active time per display</h2>
+    <table><thead><tr><th>Monitor</th><th class="r">Time</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function procEventsCard(events) {
+  if (!events || !events.length) return "";
+  const rows = events.map(e =>
+    `<tr><td class="r">${timeOfDay(e.ts)}</td><td>${esc(e.name)}</td>
+     <td><span class="pill ${e.event}">${e.event}</span></td></tr>`
+  ).join("");
+  return `<div class="card"><h2>Process lifecycle (all processes)</h2>
+    <table><thead><tr><th class="r">Time</th><th>Process</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 
 function esc(s) {

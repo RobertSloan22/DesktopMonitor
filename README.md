@@ -22,6 +22,54 @@ it from another device.
 | Websites (URLs)        | Real URLs + domains via the optional browser extension        |
 | Browser page titles    | Page titles from the window title (works even without the extension) |
 | App open / close events| Logs when windowed apps are launched and closed               |
+| Window details         | Window class, size/position, minimized/maximized, which monitor |
+| Process stats          | Foreground app CPU %, memory, parent process, command line     |
+| Input intensity        | Keystroke / click / scroll **counts** and mouse travel distance — see privacy note |
+| Session state          | Screen locked, screensaver running, Windows session id         |
+| Power                  | On AC vs battery, battery percentage                           |
+| Network                | Active Wi-Fi SSID and bytes sent/received per interval         |
+| Camera / microphone    | Whether the webcam or mic is in use (Windows ConsentStore)     |
+| Process lifecycle      | Start/stop of **all** processes, including non-windowed ones   |
+
+Every row below the original five is part of the **configurable logging suite**
+and can be turned on or off per deployment — see
+[Configurable logging suite](#configurable-logging-suite).
+
+> **Privacy note — input intensity is counts only.** The tracker records *how
+> much* you typed/clicked/scrolled per interval, never *what* you typed. There
+> is intentionally no keystroke-content logging, clipboard capture, or
+> screenshotting anywhere in this tool.
+
+---
+
+## Configurable logging suite
+
+All signals beyond the core five are gated by per-feature toggles in
+`config.py`, resolved in this order (later wins):
+
+1. Built-in defaults (`device_usage` and `process_events` default **off**; the
+   rest default **on**).
+2. Environment variables: `ACTIVITY_LOG_<NAME>=1|0` (e.g.
+   `ACTIVITY_LOG_INPUT_ACTIVITY=0`).
+3. A `config.json` in the data directory (see
+   [Where your data lives](#where-your-data-lives)), e.g.:
+
+   ```json
+   { "input_activity": false, "device_usage": true, "process_events": true }
+   ```
+
+Toggle names: `foreground`, `app_events`, `window_details`, `process_stats`,
+`input_activity`, `session_state`, `power`, `network`, `device_usage`,
+`process_events`.
+
+The tracker prints the effective configuration on startup. To preview it
+without running, use `python config.py`. For a team rollout, ship a pre-filled
+`config.json` so every machine logs a consistent, auditable set of signals.
+
+New fields are stored as nullable columns on `samples` (plus `net_samples` and
+`proc_events` tables) and are added by an automatic, idempotent migration — an
+existing database from an older build keeps working and simply gains the new
+columns.
 
 ---
 
@@ -269,7 +317,8 @@ extension's heartbeat interval is `INTERVAL_SEC` in `extension/background.js`.
 |-----------------------|----------------------------------------------------|
 | `monitor.py`          | Entry point (`tray` / `both` / `tracker` / `dashboard`) |
 | `tracker.py`          | Cross-platform collector loop (auto-selects OS)    |
-| `collector_win.py`    | Windows activity primitives (user32 + psutil)      |
+| `config.py`           | Per-feature logging toggles (env + `config.json`)  |
+| `collector_win.py`    | Windows activity primitives (Win32 + psutil)       |
 | `collector_mac.py`    | macOS activity primitives (PyObjC: AppKit + Quartz)|
 | `browsers.py`         | Shared browser detection + title cleanup           |
 | `dashboard.py`        | Web server + JSON/ingestion API (localhost or LAN) |

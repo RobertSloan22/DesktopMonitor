@@ -1,5 +1,12 @@
-# Core (required to collect activity) — cross-platform
+# Core (required to collect activity) — cross-platform.
+# Also powers the extended logging suite: process CPU/memory/cmdline,
+# battery state, and network byte counters.
 psutil>=5.9
+
+# The rest of the Windows extended suite (window geometry/monitor, input-
+# intensity hooks, lock/screensaver, Wi-Fi SSID via wlanapi, camera/mic via the
+# registry ConsentStore) uses only the Python standard library (ctypes, winreg)
+# — no additional packages are required on Windows.
 
 # System-tray icon (optional, used by the bundled app) — cross-platform
 pystray>=0.19

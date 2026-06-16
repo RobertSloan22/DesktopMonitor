@@ -56,6 +56,14 @@ def fmt_secs(s):
     return f"{h}h {m}m" if h else f"{m}m"
 
 
+def fmt_bytes(n):
+    n = float(n or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
 def domain_of(url: str) -> str:
     try:
         host = urlparse(url).hostname or ""
@@ -136,12 +144,77 @@ def day_report(conn, day):
                              "end": r["ts"] + r["duration_sec"],
                              "idle": bool(r["is_idle"])})
 
+    # --- extended logging suite aggregates (all columns are nullable) -------
+    inp = conn.execute(
+        """SELECT COALESCE(SUM(key_count),0) AS keys,
+                  COALESCE(SUM(click_count),0) AS clicks,
+                  COALESCE(SUM(scroll_count),0) AS scrolls,
+                  COALESCE(SUM(mouse_dist),0) AS dist
+           FROM samples WHERE day=?""", (day,)).fetchone()
+
+    powr = conn.execute(
+        """SELECT COALESCE(SUM(CASE WHEN on_battery=1 THEN duration_sec END),0) AS batt,
+                  COALESCE(SUM(CASE WHEN on_battery=0 THEN duration_sec END),0) AS ac,
+                  MAX(battery_pct) AS pct_max, MIN(battery_pct) AS pct_min
+           FROM samples WHERE day=?""", (day,)).fetchone()
+
+    sess = conn.execute(
+        """SELECT COALESCE(SUM(CASE WHEN locked=1 THEN duration_sec END),0) AS locked,
+                  COALESCE(SUM(CASE WHEN screensaver=1 THEN duration_sec END),0) AS saver
+           FROM samples WHERE day=?""", (day,)).fetchone()
+
+    dev = conn.execute(
+        """SELECT COALESCE(SUM(CASE WHEN camera_in_use=1 THEN duration_sec END),0) AS cam,
+                  COALESCE(SUM(CASE WHEN mic_in_use=1 THEN duration_sec END),0) AS mic
+           FROM samples WHERE day=?""", (day,)).fetchone()
+
+    monitors = conn.execute(
+        """SELECT monitor, SUM(duration_sec) AS sec
+           FROM samples WHERE day=? AND monitor IS NOT NULL AND is_idle=0
+           GROUP BY monitor ORDER BY sec DESC""", (day,)).fetchall()
+
+    net = conn.execute(
+        """SELECT COALESCE(SUM(bytes_sent),0) AS sent,
+                  COALESCE(SUM(bytes_recv),0) AS recv
+           FROM net_samples WHERE day=?""", (day,)).fetchone()
+    ssids = conn.execute(
+        """SELECT ssid, SUM(duration_sec) AS sec
+           FROM samples WHERE day=? AND ssid IS NOT NULL AND ssid<>''
+           GROUP BY ssid ORDER BY sec DESC LIMIT 10""", (day,)).fetchall()
+
+    proc_events = conn.execute(
+        """SELECT ts, process_name AS name, event
+           FROM proc_events WHERE day=? ORDER BY ts DESC LIMIT 200""",
+        (day,)).fetchall()
+
     return {
         "day": day,
         "active_sec": totals["active"],
         "idle_sec": totals["idle"],
         "active_human": fmt_secs(totals["active"]),
         "idle_human": fmt_secs(totals["idle"]),
+        "input": {"keys": int(inp["keys"]), "clicks": int(inp["clicks"]),
+                  "scrolls": int(inp["scrolls"]),
+                  "dist_px": int(inp["dist"])},
+        "power": {"battery_human": fmt_secs(powr["batt"]),
+                  "ac_human": fmt_secs(powr["ac"]),
+                  "battery_sec": powr["batt"], "ac_sec": powr["ac"],
+                  "pct_min": powr["pct_min"], "pct_max": powr["pct_max"]},
+        "session": {"locked_human": fmt_secs(sess["locked"]),
+                    "screensaver_human": fmt_secs(sess["saver"]),
+                    "locked_sec": sess["locked"]},
+        "devices": {"camera_human": fmt_secs(dev["cam"]),
+                    "mic_human": fmt_secs(dev["mic"]),
+                    "camera_sec": dev["cam"], "mic_sec": dev["mic"]},
+        "monitors": [{"monitor": m["monitor"], "sec": m["sec"],
+                      "human": fmt_secs(m["sec"])} for m in monitors],
+        "network": {"sent_human": fmt_bytes(net["sent"]),
+                    "recv_human": fmt_bytes(net["recv"]),
+                    "sent": net["sent"], "recv": net["recv"],
+                    "ssids": [{"ssid": s["ssid"], "human": fmt_secs(s["sec"])}
+                              for s in ssids]},
+        "proc_events": [{"ts": e["ts"], "name": e["name"], "event": e["event"]}
+                        for e in proc_events],
         "apps": [{"name": a["name"], "sec": a["sec"],
                   "human": fmt_secs(a["sec"])} for a in apps],
         "pages": [{"title": p["title"], "sec": p["sec"],
