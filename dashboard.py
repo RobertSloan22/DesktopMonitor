@@ -4,6 +4,9 @@
   GET  /api/days         -> list of recorded days
   GET  /api/day?date=... -> full report for a day
   POST /api/browser      -> browser extension posts the active tab here
+  POST /api/field        -> browser extension flags whether the focused web
+                            field is a password/OTP field, so keystroke-text
+                            capture is suppressed for it in real time
 
 Open http://localhost:8777 once it's running.
 """
@@ -62,6 +65,23 @@ def fmt_bytes(n):
         if n < 1024 or unit == "TB":
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
+
+
+def note_browser_field_sensitive(sensitive: bool) -> bool:
+    """Relay a browser auth-field focus/blur to the keystroke-text logger.
+    No-op (returns False) unless the Windows collector is loaded in-process."""
+    try:
+        import collector_win  # only importable on Windows
+    except Exception:
+        return False
+    fn = getattr(collector_win, "set_browser_field_sensitive", None)
+    if fn is None:
+        return False
+    try:
+        fn(bool(sensitive))
+        return True
+    except Exception:
+        return False
 
 
 def domain_of(url: str) -> str:
@@ -187,6 +207,26 @@ def day_report(conn, day):
            FROM proc_events WHERE day=? ORDER BY ts DESC LIMIT 200""",
         (day,)).fetchall()
 
+    # Keystroke text (only present when the opt-in feature is/was enabled).
+    try:
+        keys_tot = conn.execute(
+            """SELECT COALESCE(SUM(char_count),0) AS chars,
+                      COALESCE(SUM(suppressed_count),0) AS suppressed
+               FROM key_events WHERE day=?""", (day,)).fetchone()
+        keys_by_app = conn.execute(
+            """SELECT process_name AS name, SUM(char_count) AS chars
+               FROM key_events WHERE day=? AND char_count>0
+               GROUP BY process_name ORDER BY chars DESC LIMIT 20""",
+            (day,)).fetchall()
+        keys_recent = conn.execute(
+            """SELECT ts, process_name AS name, window_title AS title, text
+               FROM key_events
+               WHERE day=? AND char_count>0
+               ORDER BY ts DESC LIMIT 200""", (day,)).fetchall()
+    except sqlite3.OperationalError:   # table absent on an older database
+        keys_tot = {"chars": 0, "suppressed": 0}
+        keys_by_app, keys_recent = [], []
+
     return {
         "day": day,
         "active_sec": totals["active"],
@@ -215,6 +255,15 @@ def day_report(conn, day):
                               for s in ssids]},
         "proc_events": [{"ts": e["ts"], "name": e["name"], "event": e["event"]}
                         for e in proc_events],
+        "keystrokes": {
+            "chars": int(keys_tot["chars"]),
+            "suppressed": int(keys_tot["suppressed"]),
+            "by_app": [{"name": k["name"], "chars": int(k["chars"])}
+                       for k in keys_by_app],
+            "recent": [{"ts": k["ts"], "name": k["name"],
+                        "title": k["title"], "text": k["text"]}
+                       for k in keys_recent],
+        },
         "apps": [{"name": a["name"], "sec": a["sec"],
                   "human": fmt_secs(a["sec"])} for a in apps],
         "pages": [{"title": p["title"], "sec": p["sec"],
@@ -275,13 +324,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path != "/api/browser":
+        if parsed.path not in ("/api/browser", "/api/field"):
             return self._send(404, json.dumps({"error": "not found"}))
         try:
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             return self._send(400, json.dumps({"error": "bad json"}))
+
+        if parsed.path == "/api/field":
+            # Real-time hint: is the focused web field a password/OTP field?
+            relayed = note_browser_field_sensitive(
+                bool(payload.get("sensitive")))
+            return self._send(200, json.dumps({"ok": True, "relayed": relayed}))
 
         items = payload if isinstance(payload, list) else [payload]
         conn = db.connect()

@@ -8,6 +8,10 @@ Tables:
   - web_samples:  one row per browser-extension heartbeat (real URL + domain)
   - net_samples:  per-interval network counters + active Wi-Fi SSID
   - proc_events:  start/stop of ALL processes (incl. non-windowed) when enabled
+  - key_events:   literal typed text per active window, ONLY when the optional
+                  `keystroke_text` feature is enabled. Text typed into password
+                  / authentication fields is never stored (counted separately as
+                  `suppressed_count`).
 
 New optional columns on `samples` are added by an idempotent migration so an
 existing database from an older build keeps working and simply gains the new
@@ -99,6 +103,20 @@ CREATE TABLE IF NOT EXISTS proc_events (
     event        TEXT    NOT NULL          -- 'start' or 'stop'
 );
 CREATE INDEX IF NOT EXISTS idx_proc_events_day ON proc_events(day);
+
+CREATE TABLE IF NOT EXISTS key_events (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts               REAL    NOT NULL,
+    day              TEXT    NOT NULL,
+    process_name     TEXT    NOT NULL,
+    exe_path         TEXT,
+    window_title     TEXT,
+    is_browser       INTEGER NOT NULL DEFAULT 0,
+    text             TEXT    NOT NULL,        -- literal typed text for this window burst
+    char_count       INTEGER NOT NULL DEFAULT 0,
+    suppressed_count INTEGER NOT NULL DEFAULT 0  -- keys dropped in auth fields / shortcuts
+);
+CREATE INDEX IF NOT EXISTS idx_key_events_day ON key_events(day);
 """
 
 # Optional per-interval columns added to `samples` by migration. Keeping them
@@ -234,6 +252,23 @@ def insert_proc_event(conn, ts, pid, process_name, exe_path, event) -> None:
         """INSERT INTO proc_events (ts, day, pid, process_name, exe_path, event)
            VALUES (?,?,?,?,?,?)""",
         (ts, local_day(ts), pid, process_name, exe_path, event),
+    )
+    conn.commit()
+
+
+def insert_key_event(conn, ts, process_name, exe_path, window_title,
+                     is_browser, text, char_count, suppressed_count) -> None:
+    """Store one window's worth of typed text. Callers must already have
+    excluded authentication-field contents; `suppressed_count` records how many
+    keystrokes were dropped (auth fields / shortcuts) so the count stays honest
+    without retaining the sensitive characters."""
+    conn.execute(
+        """INSERT INTO key_events
+           (ts, day, process_name, exe_path, window_title, is_browser,
+            text, char_count, suppressed_count)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (ts, local_day(ts), process_name, exe_path, window_title,
+         1 if is_browser else 0, text, int(char_count), int(suppressed_count)),
     )
     conn.commit()
 

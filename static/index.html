@@ -149,6 +149,7 @@ function render(r) {
         </tbody></table>
       </div>
       ${inputCard(r.input)}
+      ${keystrokesCard(r.keystrokes)}
       ${powerCard(r.power)}
       ${sessionCard(r.session)}
       ${devicesCard(r.devices)}
@@ -223,7 +224,25 @@ function inputCard(d) {
                [d.clicks.toLocaleString(),"Clicks"],
                [d.scrolls.toLocaleString(),"Scroll ticks"]])}
     <div class="muted" style="margin-top:10px">Mouse travel: ${d.dist_px.toLocaleString()} px
-    (~${km} m) · key contents are never recorded</div></div>`;
+    (~${km} m) · this card is counts only</div></div>`;
+}
+
+function keystrokesCard(d) {
+  if (!d || (!d.chars && !d.suppressed)) return "";
+  const recent = (d.recent || []).map(k =>
+    `<tr><td class="r">${timeOfDay(k.ts)}</td><td>${esc(k.name)}</td>
+     <td style="font-family:ui-monospace,Menlo,Consolas,monospace;
+                white-space:pre-wrap;word-break:break-word">${esc(k.text)}</td></tr>`
+  ).join("");
+  return `<div class="card wide"><h2>Keystroke text (typed)</h2>
+    ${statRow([[d.chars.toLocaleString(),"Characters typed"],
+               [d.suppressed.toLocaleString(),"Suppressed (auth fields / shortcuts)"]])}
+    <div class="muted" style="margin:8px 0">Text typed into password /
+      authentication fields is never stored — those keystrokes are only counted
+      as "suppressed".</div>
+    <table><thead><tr><th class="r">Time</th><th>App</th><th>Text</th></tr></thead>
+    <tbody>${recent || '<tr><td class="muted" colspan="3">No text captured.</td></tr>'}</tbody></table>
+    </div>`;
 }
 
 function powerCard(d) {

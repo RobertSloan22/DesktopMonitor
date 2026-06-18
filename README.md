@@ -25,6 +25,7 @@ it from another device.
 | Window details         | Window class, size/position, minimized/maximized, which monitor |
 | Process stats          | Foreground app CPU %, memory, parent process, command line     |
 | Input intensity        | Keystroke / click / scroll **counts** and mouse travel distance — see privacy note |
+| Keystroke text (opt-in)| Literal typed text per window, **off by default** — password/auth fields excluded (Windows) |
 | Session state          | Screen locked, screensaver running, Windows session id         |
 | Power                  | On AC vs battery, battery percentage                           |
 | Network                | Active Wi-Fi SSID and bytes sent/received per interval         |
@@ -35,10 +36,47 @@ Every row below the original five is part of the **configurable logging suite**
 and can be turned on or off per deployment — see
 [Configurable logging suite](#configurable-logging-suite).
 
-> **Privacy note — input intensity is counts only.** The tracker records *how
-> much* you typed/clicked/scrolled per interval, never *what* you typed. There
-> is intentionally no keystroke-content logging, clipboard capture, or
-> screenshotting anywhere in this tool.
+> **Privacy note — input intensity is counts only.** The `input_activity`
+> feature records *how much* you typed/clicked/scrolled per interval, never
+> *what* you typed. There is no clipboard capture or screenshotting anywhere in
+> this tool.
+
+### Keystroke text (opt-in, off by default)
+
+`keystroke_text` is the one feature that records the **literal text you type**,
+attributed to the window that had focus. It is **disabled by default** and must
+be turned on deliberately (it is intended for a machine you own/administer, with
+the knowledge of anyone using it):
+
+```json
+{ "keystroke_text": true }
+```
+
+or `ACTIVITY_LOG_KEYSTROKE_TEXT=1`. When the tracker starts with it on, it prints
+a clear warning.
+
+It is wired to **never capture authentication input**, via three layers:
+
+1. **Windows password controls** — fields with the `ES_PASSWORD` style (classic
+   Win32 login boxes, UAC, etc.) are detected and skipped.
+2. **Browser password / one-time-code fields** — the companion extension flags
+   `input[type=password]`, `autocomplete=current/new-password`, and OTP fields
+   in real time (POST `/api/field`); the extension only ever sends a boolean,
+   never the field's value.
+3. **Shortcuts** — Ctrl/Alt key combinations are treated as commands, not text.
+
+Keystrokes in any of those cases are tallied as **suppressed** (so the count
+stays honest) but their contents are discarded. If field type can't be
+determined, capture **fails closed** (the keystroke is dropped, not stored).
+
+> ⚠️ **Limitation, stated plainly.** The OS-level password detection (layer 1)
+> only sees native Win32 controls. Password fields in browsers, Electron, and
+> other custom-drawn UIs are covered **only when the browser extension is
+> installed and running** (layer 2). Install the extension if you enable this.
+>
+> ⚠️ Enabling this means the local database contains text you typed. Treat
+> `activity.db` as sensitive and protect it with full-disk encryption. Typed
+> text is stored in the `key_events` table and shown on the dashboard.
 
 ---
 
@@ -59,8 +97,8 @@ All signals beyond the core five are gated by per-feature toggles in
    ```
 
 Toggle names: `foreground`, `app_events`, `window_details`, `process_stats`,
-`input_activity`, `session_state`, `power`, `network`, `device_usage`,
-`process_events`.
+`input_activity`, `keystroke_text` (off by default), `session_state`, `power`,
+`network`, `device_usage`, `process_events`.
 
 The tracker prints the effective configuration on startup. To preview it
 without running, use `python config.py`. For a team rollout, ship a pre-filled

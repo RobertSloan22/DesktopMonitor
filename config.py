@@ -16,8 +16,21 @@ Privacy posture
 ---------------
 `input_activity` records *counts only* — keystrokes-per-interval, click counts,
 scroll ticks, and mouse travel distance. It never records which keys were
-pressed or any typed text. There is intentionally no keystroke-content,
-clipboard, or screenshot capture in this tool.
+pressed or any typed text.
+
+`keystroke_text` is the ONE capability that records the literal text you type
+(for desktop-activity review). It is **off by default** and must be turned on
+deliberately. When on, it is wired to *never* capture text typed into
+authentication inputs — Windows password controls (ES_PASSWORD), and browser
+password / one-time-code fields when the companion extension is installed.
+Keystrokes in those fields are counted as "suppressed" but their contents are
+discarded. Ctrl/Alt shortcut combinations are likewise not recorded as text.
+There is still no clipboard or screenshot capture in this tool.
+
+Enabling `keystroke_text` means the local database will contain text you typed.
+Treat that database as sensitive (it is per-user and local; protect it with
+full-disk encryption). This capability is intended for monitoring a machine you
+own/administer with the knowledge of anyone using it.
 """
 
 import json
@@ -34,6 +47,8 @@ FEATURES = {
     "process_stats":  (True,  "foreground process cpu%, memory, parent, cmdline"),
     "input_activity": (True,  "input INTENSITY counts only (keys/clicks/scroll/"
                               "mouse-distance) — never key contents"),
+    "keystroke_text": (False, "literal typed TEXT per window — suppressed in "
+                              "password / auth fields (OFF by default)"),
     "session_state":  (True,  "screen locked / screensaver / session id"),
     "power":          (True,  "AC vs battery, battery percentage"),
     "network":        (True,  "active Wi-Fi SSID + bytes sent/received"),

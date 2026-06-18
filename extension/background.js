@@ -87,6 +87,26 @@ chrome.windows.onFocusChanged.addListener((winId) => {
   if (winId !== chrome.windows.WINDOW_ID_NONE) heartbeat();
 });
 
+// Relay sensitive-field focus/blur from content scripts to the monitor, so
+// keystroke-text capture is suppressed for password / OTP fields in real time.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "field") reportField(!!msg.sensitive);
+});
+
+async function reportField(sensitive) {
+  const c = await getConfig();
+  if (!c.enabled) return;
+  try {
+    await fetch(`http://${c.host}:${c.port}/api/field`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sensitive }),
+    });
+  } catch (e) {
+    /* monitor not running / unreachable — nothing to suppress remotely */
+  }
+}
+
 async function setStatus(ok, detail) {
   await chrome.storage.local.set({
     status: { ok, detail, when: new Date().toLocaleTimeString() },

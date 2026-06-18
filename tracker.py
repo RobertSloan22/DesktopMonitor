@@ -74,6 +74,21 @@ def run() -> None:
             print(f"[tracker] input monitor unavailable: {e}")
             cfg["input_activity"] = False
 
+    # Keystroke-TEXT capture (opt-in). Shares the keyboard hook; records typed
+    # text per window EXCEPT in password / authentication fields.
+    if cfg.get("keystroke_text") and hasattr(col, "start_keystroke_log"):
+        try:
+            col.start_keystroke_log()
+            print("[tracker] *** keystroke-TEXT logging ON — literal typed text "
+                  "is being recorded (password/auth fields excluded). ***")
+        except Exception as e:
+            print(f"[tracker] keystroke-text logging unavailable: {e}")
+            cfg["keystroke_text"] = False
+    elif cfg.get("keystroke_text"):
+        print("[tracker] keystroke-text logging requested but unsupported on "
+              "this platform; disabling.")
+        cfg["keystroke_text"] = False
+
     prev_apps = col.windowed_apps() if cfg["app_events"] else set()
     for name in prev_apps:  # apps already open at startup count as 'start'
         db.insert_event(conn, time.time(), name, "start")
@@ -120,6 +135,17 @@ def run() -> None:
                 fg["process_name"], fg["exe_path"], fg["window_title"],
                 fg["is_browser"], fg["page_title"], is_idle, extra,
             )
+
+            # Keystroke text: drain the per-window bursts buffered since the
+            # last interval. Each burst already has auth-field text removed.
+            if cfg.get("keystroke_text") and hasattr(col, "keystroke_log"):
+                for k in _call(col, "keystroke_log") or []:
+                    if k.get("char_count") or k.get("suppressed_count"):
+                        db.insert_key_event(
+                            conn, now, k["process_name"], k.get("exe_path"),
+                            k.get("window_title"), k.get("is_browser"),
+                            k.get("text", ""), k.get("char_count", 0),
+                            k.get("suppressed_count", 0))
 
             # Network: store per-interval byte deltas + SSID in its own table.
             if cfg["network"] and net:

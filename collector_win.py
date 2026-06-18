@@ -13,6 +13,13 @@ failure returns a neutral/empty result rather than raising):
   start_input_monitor() / input_activity()
                     -> dict(key_count, click_count, scroll_count, mouse_dist)
                        COUNTS ONLY — never which keys are pressed.
+  start_keystroke_log() / keystroke_log()
+                    -> [dict(process_name, window_title, text, char_count,
+                       suppressed_count), ...]  OPT-IN literal typed text per
+                       window; text in password/auth fields is discarded.
+  set_browser_field_sensitive(bool)
+                    -> tell the text logger the focused web field is (not) a
+                       password/OTP field (relayed from the browser extension).
   session_state()   -> dict(locked, screensaver, session_id)
   power_state()     -> dict(on_battery, battery_pct)
   network_state()   -> dict(ssid, bytes_sent, bytes_recv)  (cumulative bytes)
@@ -263,20 +270,65 @@ def process_stats() -> dict:
 _cpu_cache = {}
 
 
-# --- input_activity (COUNTS ONLY — no key contents) -------------------------
+# --- input_activity + optional keystroke TEXT -------------------------------
+# Two layers share the single low-level keyboard hook:
+#   * input_activity : COUNTS ONLY (keys/clicks/scroll/mouse-distance).
+#   * keystroke_text : OPT-IN literal typed text, attributed per active window,
+#                      with text typed into authentication fields discarded.
+# The text layer is dormant unless start_keystroke_log() has been called.
 class MSLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [("pt", POINT), ("mouseData", wt.DWORD), ("flags", wt.DWORD),
                 ("time", wt.DWORD), ("dwExtraInfo", ULONG_PTR)]
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD),
+                ("flags", wt.DWORD), ("time", wt.DWORD),
+                ("dwExtraInfo", ULONG_PTR)]
+
+
+class GUITHREADINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("flags", wt.DWORD),
+                ("hwndActive", wt.HWND), ("hwndFocus", wt.HWND),
+                ("hwndCapture", wt.HWND), ("hwndMenuOwner", wt.HWND),
+                ("hwndMoveSize", wt.HWND), ("hwndCaret", wt.HWND),
+                ("rcCaret", RECT)]
 
 
 _WH_KEYBOARD_LL = 13
 _WH_MOUSE_LL = 14
 _WM_KEYDOWN = 0x0100
 _WM_SYSKEYDOWN = 0x0104
+_WM_KEYUP = 0x0101
+_WM_SYSKEYUP = 0x0105
 _WM_MOUSEMOVE = 0x0200
 _WM_MOUSEWHEEL = 0x020A
 _WM_MOUSEHWHEEL = 0x020E
 _MOUSE_DOWN = {0x0201, 0x0204, 0x0207, 0x020B}  # L / R / M / X button down
+
+# Virtual-key codes we treat specially.
+_VK_BACK = 0x08
+_VK_TAB = 0x09
+_VK_RETURN = 0x0D
+_VK_SHIFT, _VK_CONTROL, _VK_MENU, _VK_CAPITAL = 0x10, 0x11, 0x12, 0x14
+_VK_LSHIFT, _VK_RSHIFT = 0xA0, 0xA1
+_VK_LCONTROL, _VK_RCONTROL = 0xA2, 0xA3
+_VK_LMENU, _VK_RMENU = 0xA4, 0xA5
+_MODIFIER_VKS = {_VK_SHIFT, _VK_CONTROL, _VK_MENU, _VK_CAPITAL,
+                 _VK_LSHIFT, _VK_RSHIFT, _VK_LCONTROL, _VK_RCONTROL,
+                 _VK_LMENU, _VK_RMENU}
+
+_ES_PASSWORD = 0x0020   # edit-control style bit for masked input
+_GWL_STYLE = -16
+
+# Declarations needed for translation + focused-field inspection.
+_declare(user32.GetGUIThreadInfo, wt.BOOL, [wt.DWORD, ctypes.c_void_p])
+_declare(user32.GetWindowLongW, wt.LONG, [wt.HWND, ctypes.c_int])
+_declare(user32.GetKeyboardLayout, wt.HKL, [wt.DWORD])
+_declare(user32.GetKeyState, ctypes.c_short, [ctypes.c_int])
+_declare(user32.ToUnicodeEx, ctypes.c_int,
+         [wt.UINT, wt.UINT, ctypes.c_void_p, wt.LPWSTR, ctypes.c_int,
+          wt.UINT, wt.HKL])
 
 _input_lock = threading.Lock()
 _counts = {"key": 0, "click": 0, "scroll": 0, "dist": 0.0}
@@ -285,13 +337,181 @@ _input_started = False
 # Hold references so the callbacks/hooks are not garbage-collected.
 _hook_refs = []
 
+# --- keystroke-text state (all touched only under _input_lock) --------------
+_kl_enabled = False
+_kl_segments = []     # finished per-window text bursts awaiting flush
+_kl_cur = None        # the burst currently accumulating
+_mods = {"shift": False, "ctrl": False, "alt": False, "caps": False}
+# A browser auth field is "sensitive until" this tick-count, refreshed by the
+# extension via set_browser_field_sensitive(); a TTL guards against a missed
+# blur leaving capture stuck on.
+_browser_sensitive_deadline = [0]
+_BROWSER_SENSITIVE_TTL_MS = 6000
+_pid_name_cache = {}  # pid -> (name, exe, is_browser); reset if it grows large
+
 HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wt.WPARAM, wt.LPARAM)
 
 
+def _kl_proc_info_cached(pid):
+    info = _pid_name_cache.get(pid)
+    if info is not None:
+        return info
+    name, exe = _proc_info(pid)
+    info = (name, exe, name.lower() in browsers.WINDOWS_BROWSERS)
+    if len(_pid_name_cache) > 256:
+        _pid_name_cache.clear()
+    _pid_name_cache[pid] = info
+    return info
+
+
+def _focused_is_password() -> bool:
+    """True if the focused control is a masked/password edit. Best-effort: this
+    only sees native Win32 controls (ES_PASSWORD); browser/Electron password
+    fields are covered separately via set_browser_field_sensitive()."""
+    try:
+        fg = user32.GetForegroundWindow()
+        if not fg:
+            return False
+        tid = user32.GetWindowThreadProcessId(fg, None)
+        gti = GUITHREADINFO()
+        gti.cbSize = ctypes.sizeof(gti)
+        if not user32.GetGUIThreadInfo(tid, ctypes.byref(gti)):
+            return False
+        h = gti.hwndFocus or gti.hwndCaret
+        if not h:
+            return False
+        if user32.GetWindowLongW(h, _GWL_STYLE) & _ES_PASSWORD:
+            return True
+        buf = ctypes.create_unicode_buffer(64)
+        if user32.GetClassNameW(h, buf, 64) and "password" in buf.value.lower():
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _browser_sensitive_active() -> bool:
+    return kernel32.GetTickCount() < _browser_sensitive_deadline[0]
+
+
+def set_browser_field_sensitive(sensitive: bool,
+                                ttl_ms: int = _BROWSER_SENSITIVE_TTL_MS) -> None:
+    """Signal (from the browser extension, relayed by the dashboard) that the
+    focused web field is — or is no longer — a password / one-time-code input.
+    While active, keystrokes in a foreground browser are not recorded as text."""
+    _browser_sensitive_deadline[0] = (
+        kernel32.GetTickCount() + ttl_ms if sensitive else 0)
+
+
+def _update_mod(vk, is_down) -> None:
+    if vk in (_VK_SHIFT, _VK_LSHIFT, _VK_RSHIFT):
+        _mods["shift"] = is_down
+    elif vk in (_VK_CONTROL, _VK_LCONTROL, _VK_RCONTROL):
+        _mods["ctrl"] = is_down
+    elif vk in (_VK_MENU, _VK_LMENU, _VK_RMENU):
+        _mods["alt"] = is_down
+    elif vk == _VK_CAPITAL and is_down:
+        _mods["caps"] = not _mods["caps"]
+
+
+def _translate(vk, scan) -> str:
+    """Virtual key -> the character(s) it would produce, honouring the tracked
+    Shift / Caps / AltGr state. Returns '' for non-text keys and dead keys."""
+    state = (ctypes.c_ubyte * 256)()
+    if _mods["shift"]:
+        state[_VK_SHIFT] = 0x80
+    if _mods["caps"]:
+        state[_VK_CAPITAL] = 0x01
+    if _mods["ctrl"] and _mods["alt"]:           # AltGr
+        state[_VK_CONTROL] = 0x80
+        state[_VK_MENU] = 0x80
+    fg = user32.GetForegroundWindow()
+    tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+    hkl = user32.GetKeyboardLayout(tid)
+    buf = ctypes.create_unicode_buffer(8)
+    # wFlags bit 2 (0x4) = don't disturb the keyboard's dead-key state (Win10+).
+    n = user32.ToUnicodeEx(vk, scan, state, buf, 8, 0x4, hkl)
+    return buf.value[:n] if n > 0 else ""
+
+
+def _kl_new_segment():
+    fg = user32.GetForegroundWindow()
+    hwnd = int(fg) if fg else 0
+    pid = _pid_of_window(fg) if fg else 0
+    title = _window_title(fg) if fg else ""
+    if pid:
+        name, exe, is_browser = _kl_proc_info_cached(pid)
+    else:
+        name, exe, is_browser = "idle-desktop", None, False
+    return {"hwnd": hwnd, "pid": pid, "process_name": name, "exe_path": exe,
+            "window_title": title, "is_browser": is_browser,
+            "chars": [], "dropped": 0}
+
+
+def _kl_flush_current() -> None:
+    global _kl_cur
+    if _kl_cur and (_kl_cur["chars"] or _kl_cur["dropped"]):
+        _kl_segments.append(_kl_cur)
+    _kl_cur = None
+
+
+def _kl_capture(vk, scan) -> None:
+    """Append one keystroke's text to the current window's burst, unless it
+    belongs to an authentication field or is a command shortcut."""
+    global _kl_cur
+    fg = user32.GetForegroundWindow()
+    hwnd = int(fg) if fg else 0
+    if _kl_cur is None or _kl_cur["hwnd"] != hwnd:
+        _kl_flush_current()
+        _kl_cur = _kl_new_segment()
+    cur = _kl_cur
+
+    # Suppression. Fail CLOSED: if we cannot determine the field, don't record.
+    try:
+        suppressed = _focused_is_password() or (
+            cur["is_browser"] and _browser_sensitive_active())
+    except Exception:
+        suppressed = True
+    # A Ctrl shortcut (without AltGr) is a command, not typed text.
+    if _mods["ctrl"] and not _mods["alt"]:
+        suppressed = True
+    if suppressed:
+        cur["dropped"] += 1
+        return
+
+    if vk == _VK_BACK:
+        if cur["chars"]:
+            cur["chars"].pop()
+    elif vk == _VK_RETURN:
+        cur["chars"].append("\n")
+    elif vk == _VK_TAB:
+        cur["chars"].append("\t")
+    else:
+        ch = _translate(vk, scan)
+        if ch:
+            cur["chars"].extend(ch)
+
+
 def _kbd_proc(nCode, wParam, lParam):
-    if nCode == 0 and wParam in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
-        with _input_lock:
-            _counts["key"] += 1  # count only; vkCode is deliberately ignored
+    if nCode == 0:
+        is_down = wParam in (_WM_KEYDOWN, _WM_SYSKEYDOWN)
+        is_up = wParam in (_WM_KEYUP, _WM_SYSKEYUP)
+        if is_down or is_up:
+            try:
+                ks = ctypes.cast(
+                    lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                vk, scan = ks.vkCode, ks.scanCode
+            except Exception:
+                return user32.CallNextHookEx(0, nCode, wParam, lParam)
+            with _input_lock:
+                _update_mod(vk, is_down)
+                if is_down:
+                    _counts["key"] += 1  # intensity count (never the key)
+                    if _kl_enabled and vk not in _MODIFIER_VKS:
+                        try:
+                            _kl_capture(vk, scan)
+                        except Exception:
+                            pass
     return user32.CallNextHookEx(0, nCode, wParam, lParam)
 
 
@@ -353,6 +573,40 @@ def input_activity() -> dict:
                "mouse_dist": round(_counts["dist"], 1)}
         _counts["key"] = _counts["click"] = _counts["scroll"] = 0
         _counts["dist"] = 0.0
+    return out
+
+
+def start_keystroke_log() -> None:
+    """Enable literal keystroke-text capture. Shares the keyboard hook with the
+    intensity counter, so this also starts the hook if it isn't running yet."""
+    global _kl_enabled
+    start_input_monitor()
+    with _input_lock:
+        _mods["caps"] = bool(user32.GetKeyState(_VK_CAPITAL) & 1)
+        _kl_enabled = True
+
+
+def keystroke_log() -> list:
+    """Drain the buffered per-window typed-text bursts since the last call.
+
+    Returns a list of dicts: process_name, exe_path, window_title, is_browser,
+    text, char_count, suppressed_count. Text from authentication fields is never
+    present — those keystrokes are tallied in `suppressed_count` only."""
+    if not _kl_enabled:
+        return []
+    with _input_lock:
+        _kl_flush_current()
+        segs = _kl_segments[:]
+        _kl_segments.clear()
+    out = []
+    for s in segs:
+        text = "".join(s["chars"])
+        out.append({"process_name": s["process_name"],
+                    "exe_path": s["exe_path"],
+                    "window_title": s["window_title"],
+                    "is_browser": s["is_browser"],
+                    "text": text, "char_count": len(text),
+                    "suppressed_count": s["dropped"]})
     return out
 
 
