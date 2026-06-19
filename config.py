@@ -19,8 +19,9 @@ scroll ticks, and mouse travel distance. It never records which keys were
 pressed or any typed text.
 
 `keystroke_text` is the ONE capability that records the literal text you type
-(for desktop-activity review). It is **off by default** and must be turned on
-deliberately. When on, it is wired to *never* capture text typed into
+(for desktop-activity review). It is **on by default** in this build; set it to
+false (via config.json or the env var) to turn it off. When on, it is wired to
+*never* capture text typed into
 authentication inputs — Windows password controls (ES_PASSWORD), and browser
 password / one-time-code fields when the companion extension is installed.
 Keystrokes in those fields are counted as "suppressed" but their contents are
@@ -47,8 +48,8 @@ FEATURES = {
     "process_stats":  (True,  "foreground process cpu%, memory, parent, cmdline"),
     "input_activity": (True,  "input INTENSITY counts only (keys/clicks/scroll/"
                               "mouse-distance) — never key contents"),
-    "keystroke_text": (False, "literal typed TEXT per window — suppressed in "
-                              "password / auth fields (OFF by default)"),
+    "keystroke_text": (True,  "literal typed TEXT per window — suppressed in "
+                              "password / auth fields (ON by default)"),
     "session_state":  (True,  "screen locked / screensaver / session id"),
     "power":          (True,  "AC vs battery, battery percentage"),
     "network":        (True,  "active Wi-Fi SSID + bytes sent/received"),

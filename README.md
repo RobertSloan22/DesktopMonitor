@@ -25,7 +25,7 @@ it from another device.
 | Window details         | Window class, size/position, minimized/maximized, which monitor |
 | Process stats          | Foreground app CPU %, memory, parent process, command line     |
 | Input intensity        | Keystroke / click / scroll **counts** and mouse travel distance — see privacy note |
-| Keystroke text (opt-in)| Literal typed text per window, **off by default** — password/auth fields excluded (Windows) |
+| Keystroke text         | Literal typed text per window, **on by default** — password/auth fields excluded (Windows) |
 | Session state          | Screen locked, screensaver running, Windows session id         |
 | Power                  | On AC vs battery, battery percentage                           |
 | Network                | Active Wi-Fi SSID and bytes sent/received per interval         |
@@ -41,18 +41,18 @@ and can be turned on or off per deployment — see
 > *what* you typed. There is no clipboard capture or screenshotting anywhere in
 > this tool.
 
-### Keystroke text (opt-in, off by default)
+### Keystroke text (on by default in this build)
 
 `keystroke_text` is the one feature that records the **literal text you type**,
-attributed to the window that had focus. It is **disabled by default** and must
-be turned on deliberately (it is intended for a machine you own/administer, with
-the knowledge of anyone using it):
+attributed to the window that had focus. It is **enabled by default** in this
+build (it is intended for a machine you own/administer, with the knowledge of
+anyone using it). To turn it off:
 
 ```json
-{ "keystroke_text": true }
+{ "keystroke_text": false }
 ```
 
-or `ACTIVITY_LOG_KEYSTROKE_TEXT=1`. When the tracker starts with it on, it prints
+or `ACTIVITY_LOG_KEYSTROKE_TEXT=0`. When the tracker starts with it on, it prints
 a clear warning.
 
 It is wired to **never capture authentication input**, via three layers:
@@ -97,7 +97,7 @@ All signals beyond the core five are gated by per-feature toggles in
    ```
 
 Toggle names: `foreground`, `app_events`, `window_details`, `process_stats`,
-`input_activity`, `keystroke_text` (off by default), `session_state`, `power`,
+`input_activity`, `keystroke_text` (on by default), `session_state`, `power`,
 `network`, `device_usage`, `process_events`.
 
 The tracker prints the effective configuration on startup. To preview it
